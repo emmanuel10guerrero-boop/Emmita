@@ -54,7 +54,7 @@ export async function POST(req: Request) {
       .from('platos') as any)
       .insert([
         { 
-          nombre: nombrePlato, 
+          nombre: nombrePlato,
           restaurante_id: restaurantId,
           alergenos: resultadoIA.alergenos,
           trazas: resultadoIA.trazas,
