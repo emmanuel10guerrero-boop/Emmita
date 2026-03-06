@@ -30,14 +30,29 @@ export default function MenusPage() {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getRestaurantId = async () => {
+    const fromStorage = localStorage.getItem("restaurantId");
+    if (fromStorage) return fromStorage;
+
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user?.id) return null;
+
+    localStorage.setItem("restaurantId", data.user.id);
+    return data.user.id;
+  };
+
   const handleCrearMenu = async () => {
   if (!nombreMenu.trim()) return;
 
   setGuardando(true);
   setError(null);
 
-  // TODO: replace this with the real restaurant id from auth/profile
-  const restauranteId = "4040e3f0-b1ea-4ad5-8b2e-cb18345a08f0";
+  const restauranteId = await getRestaurantId();
+  if (!restauranteId) {
+    setGuardando(false);
+    router.push("/registro");
+    return;
+  }
 
   const { data, error } = await supabase
     .from("menus")
@@ -56,7 +71,7 @@ export default function MenusPage() {
     return;
   }
 
-  window.location.href = `/dashboard/menus/nuevo?menuId=${data.id}`;
+  router.push(`/dashboard/menus/nuevo?menuId=${data.id}`);
 };
 
   useEffect(() => {
@@ -200,15 +215,23 @@ export default function MenusPage() {
                           </p>
                         </div>
                       </div>
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          menu.activo
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        {menu.activo ? 'Activo' : 'Inactivo'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            menu.activo
+                              ? 'bg-green-100 text-green-700'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {menu.activo ? 'Activo' : 'Inactivo'}
+                        </span>
+                        <Link
+                          href={`/dashboard/menus/nuevo?menuId=${menu.id}`}
+                          className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-blue-700"
+                        >
+                          Gestionar
+                        </Link>
+                      </div>
                     </div>
                     <p className="mt-3 text-xs text-gray-400">
                       Creado: {new Date(menu.created_at).toLocaleDateString()}

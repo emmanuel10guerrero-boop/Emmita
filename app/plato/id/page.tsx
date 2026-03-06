@@ -11,6 +11,8 @@ const supabase = createClient(
 export default function PaginaPublicaPlato() {
   const { id } = useParams();
   const [plato, setPlato] = useState<any>(null);
+  const nombrePlato =
+    plato?.nombreplato ?? plato?.nombre_plato ?? plato?.nombre ?? 'Plato sin nombre';
 
   useEffect(() => {
     const obtenerPlato = async () => {
@@ -31,7 +33,7 @@ export default function PaginaPublicaPlato() {
       <div className="max-w-md mx-auto border-2 border-green-500 rounded-3xl p-6 shadow-xl">
         <div className="text-center mb-6">
           <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full uppercase">Informe Seguro</span>
-          <h1 className="text-3xl font-black text-gray-900 mt-2">{plato.nombre_plato}</h1>
+          <h1 className="text-3xl font-black text-gray-900 mt-2">{nombrePlato}</h1>
           <p className="text-gray-500 text-sm">Restaurante: {plato.restaurantes?.nombre_establecimiento}</p>
         </div>
 

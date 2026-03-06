@@ -14,6 +14,9 @@ export default function HistorialPlatos() {
   const [platoSeleccionado, setPlatoSeleccionado] = useState<any>(null); // Estado para el modal
   const router = useRouter();
 
+  const getNombrePlato = (plato: any) =>
+    plato?.nombreplato ?? plato?.nombre_plato ?? plato?.nombre ?? 'Plato sin nombre';
+
   useEffect(() => {
     cargarPlatos();
   }, []);
@@ -65,7 +68,7 @@ export default function HistorialPlatos() {
               >
                 <div>
                   <h3 className="text-lg font-bold text-gray-800 group-hover:text-blue-600 transition-colors">
-                    {plato.nombre_plato}
+                    {getNombrePlato(plato)}
                   </h3>
                   <p className="text-xs text-gray-400">
                     {new Date(plato.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}
@@ -96,7 +99,9 @@ export default function HistorialPlatos() {
               <div className="p-6 space-y-6">
                 <div>
                   <label className="text-xs font-bold text-gray-400 uppercase">Plato</label>
-                  <p className="text-2xl font-bold text-gray-900">{platoSeleccionado.nombre_plato}</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {getNombrePlato(platoSeleccionado)}
+                  </p>
                 </div>
 
                 <div>
