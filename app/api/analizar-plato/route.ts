@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
@@ -6,37 +5,100 @@ import OpenAI from 'openai';
 export const maxDuration = 60; 
 export const dynamic = 'force-dynamic';
 
-// Inicialización de clientes
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+function extractFirstJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  return trimmed;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
 
 export async function POST(req: Request) {
   try {
-    const { nombrePlato, restaurantId, imagenBase64 } = await req.json();
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Falta OPENAI_API_KEY en el entorno del servidor. Configúrala en .env.local y reinicia el servidor.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const openai = new OpenAI({ apiKey });
+
+    const {
+      nombrePlato,
+      imagenBase64,
+      descripcionPlato,
+      etiquetasIngredientes,
+      instruccionesExtra,
+    } = await req.json();
+
+    if (!nombrePlato || typeof nombrePlato !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Falta nombrePlato" },
+        { status: 400 }
+      );
+    }
+
+    const ingredientes = Array.isArray(etiquetasIngredientes)
+      ? etiquetasIngredientes.filter(
+          (item: unknown): item is string =>
+            typeof item === "string" && item.trim().length > 0
+        )
+      : [];
+
+    const promptBase = [
+      `Nombre del plato: ${nombrePlato}`,
+      `Descripcion del plato: ${descripcionPlato || "No especificada"}`,
+      `Ingredientes/etiquetas declaradas: ${
+        ingredientes.length > 0 ? ingredientes.join(", ") : "No especificadas"
+      }`,
+      instruccionesExtra
+        ? `Instrucciones adicionales del restaurante: ${instruccionesExtra}`
+        : null,
+      'Analiza posibles alergenos y trazas, considerando descripcion, ingredientes declarados y foto (si existe).',
+      'Responde estrictamente en JSON con este formato: {"alergenos":[],"trazas":[],"justificacion":""}.',
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const userContent: Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    > = [{ type: "text", text: promptBase }];
+
+    if (typeof imagenBase64 === "string" && imagenBase64.trim().length > 0) {
+      userContent.push({
+        type: "image_url",
+        image_url: { url: imagenBase64 },
+      });
+    }
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
           role: "user",
-          content: [
-            { 
-              type: "text", 
-              text: "Analiza los alérgenos de este plato. Responde estrictamente en formato JSON con esta estructura: { \"alergenos\": [], \"trazas\": [], \"justificacion\": \"\" }" 
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: imagenBase64,
-              },
-            },
-          ],
+          content: userContent,
         },
       ],
       response_format: { type: "json_object" },
@@ -45,38 +107,33 @@ export async function POST(req: Request) {
     const contenido = response.choices[0].message.content;
     if (!contenido) throw new Error("La IA no devolvió contenido");
 
-    const resultadoIA = JSON.parse(contenido); 
+    let resultadoIA: unknown;
+    try {
+      resultadoIA = JSON.parse(extractFirstJsonObject(contenido));
+    } catch {
+      throw new Error("La IA devolvió una respuesta no válida en formato JSON");
+    }
 
-    // Guardado en Supabase con el truco 'as any' para evitar líos de tipos
-   // ... (Mantén todo igual hasta el insert)
+    const parsed = resultadoIA as {
+      alergenos?: unknown;
+      trazas?: unknown;
+      justificacion?: unknown;
+    };
 
-    const { data, error } = await (supabase
-      .from('platos') as any)
-      .insert([
-        { 
-          nombre: nombrePlato,
-          restaurante_id: restaurantId,
-          alergenos: resultadoIA.alergenos,
-          trazas: resultadoIA.trazas,
-          justificacion: resultadoIA.justificacion 
-        }
-      ])
-      .select();
-
-    if (error) throw error;
-
-    // --- CAMBIO AQUÍ ---
-    // Enviamos un solo objeto que contiene el ID de la DB y los datos de la IA
-    return NextResponse.json({ 
-      id: data[0].id,        // Entregamos el ID para el código QR
-      ...resultadoIA,        // "Esparcimos" alergenos, trazas y justificacion al primer nivel
-      success: true 
+    return NextResponse.json({
+      alergenos: toStringArray(parsed.alergenos),
+      trazas: toStringArray(parsed.trazas),
+      justificacion:
+        typeof parsed.justificacion === "string"
+          ? parsed.justificacion
+          : "Sin justificación",
+      success: true,
     });
-
-  } catch (err: any) {
-    console.error("❌ Error detallado:", err.message);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Error desconocido";
+    console.error("❌ Error detallado:", message);
     return NextResponse.json(
-      { success: false, error: err.message }, 
+      { success: false, error: message },
       { status: 500 }
     );
   }

@@ -2,11 +2,23 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
+import type { PostgrestError } from "@supabase/supabase-js";
+import Link from "next/link";
+import { ArrowLeft, ClipboardList } from "lucide-react";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
+
+type OrdenItem = {
+  id: string;
+  cantidad: number | null;
+  plato: {
+    id: string;
+    nombre: string | null;
+  }[] | null;
+};
 
 type Orden = {
   id: string;
@@ -14,10 +26,32 @@ type Orden = {
   estado: string | null;
   total: number | null;
   created_at: string;
+  visto: boolean | null;
+  orden_items?: OrdenItem[];
 };
 
 const ESTADOS = ["pendiente", "preparando", "listo"] as const;
 type Estado = (typeof ESTADOS)[number];
+const ESTADO_STYLES: Record<
+  Estado,
+  {
+    pill: string;
+    badge: string;
+  }
+> = {
+  pendiente: {
+    pill: "bg-amber-50 text-amber-700",
+    badge: "bg-amber-100 text-amber-700",
+  },
+  preparando: {
+    pill: "bg-blue-50 text-blue-700",
+    badge: "bg-blue-100 text-blue-700",
+  },
+  listo: {
+    pill: "bg-green-50 text-green-700",
+    badge: "bg-green-100 text-green-700",
+  },
+};
 
 function formatMoney(value: number | null) {
   if (value == null) return "—";
@@ -36,15 +70,39 @@ export default function OrdenesPage() {
   const [error, setError] = useState<string | null>(null);
   const [ordenes, setOrdenes] = useState<Orden[]>([]);
 
+  const fetchOrdenes = async (): Promise<{
+    data: Orden[];
+    error: PostgrestError | null;
+  }> => {
+    const { data, error } = await supabase
+      .from("ordenes")
+      .select(`
+            id,
+            restaurante_id,
+            estado,
+            total,
+            created_at,
+            visto,
+            orden_items (
+                id,
+                cantidad,
+                plato:platos (
+                id,
+                nombre
+                )
+            )
+            `)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    return { data: data ?? [], error };
+  };
+
   const loadOrdenes = async () => {
     setLoading(true);
     setError(null);
 
-    const { data, error } = await supabase
-      .from("ordenes")
-      .select("id, restaurante_id, estado, total, created_at")
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const { data, error } = await fetchOrdenes();
 
     if (error) {
       setError(error.message);
@@ -53,28 +111,46 @@ export default function OrdenesPage() {
       return;
     }
 
-    setOrdenes((data ?? []) as Orden[]);
+    setOrdenes(data);
     setLoading(false);
   };
 
   useEffect(() => {
-  loadOrdenes();
+    let active = true;
 
-  const channel = supabase
-    .channel("ordenes-changes")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "ordenes" },
-      () => {
-        loadOrdenes();
+    const syncOrdenes = async () => {
+      const { data, error } = await fetchOrdenes();
+      if (!active) return;
+
+      if (error) {
+        setError(error.message);
+        setOrdenes([]);
+      } else {
+        setError(null);
+        setOrdenes(data);
       }
-    )
-    .subscribe();
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}, []);
+      setLoading(false);
+    };
+
+    void syncOrdenes();
+
+    const channel = supabase
+      .channel("ordenes-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ordenes" },
+        () => {
+          void syncOrdenes();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const grouped = useMemo(() => {
     const map: Record<string, Orden[]> = {
@@ -118,64 +194,59 @@ export default function OrdenesPage() {
     e === "pendiente" ? "preparando" : e === "preparando" ? "listo" : null;
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Órdenes</h1>
-        <span style={{ fontSize: 12, opacity: 0.7 }}>
-          Vista en vivo (Pendiente → Preparando → Listo)
-        </span>
-      </div>
+    <div className="min-h-screen bg-gray-50 p-8">
+      <header className="max-w-6xl mx-auto mb-8">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <h1 className="text-4xl font-black text-gray-900">Órdenes</h1>
+            <span className="text-sm font-medium text-gray-500">
+              Vista en vivo (Pendiente → Preparando → Listo)
+            </span>
+          </div>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md hover:bg-gray-100"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Volver al panel
+          </Link>
+        </div>
+      </header>
 
-      <div style={{ marginTop: 12 }}>
-        {loading && <p>Cargando...</p>}
+      <div className="max-w-6xl mx-auto">
+        {loading && <p className="text-gray-500 font-medium">Cargando...</p>}
 
         {!loading && error && (
-          <div>
-            <p style={{ fontWeight: 600 }}>Error:</p>
-            <p>{error}</p>
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+            <p className="font-bold text-red-700">Error:</p>
+            <p className="text-red-700">{error}</p>
           </div>
         )}
       </div>
 
       {!loading && !error && (
-        <div
-          style={{
-            marginTop: 16,
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 16,
-          }}
-        >
+        <div className="max-w-6xl mx-auto mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {ESTADOS.map((estado) => (
             <div
               key={estado}
-              style={{
-                border: "1px solid rgba(0,0,0,0.12)",
-                borderRadius: 12,
-                padding: 12,
-                minHeight: 280,
-              }}
+              className="group bg-white border border-gray-100 rounded-2xl p-5 shadow-sm min-h-[320px] transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
             >
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <h2
-                  style={{
-                    fontSize: 16,
-                    margin: 0,
-                    textTransform: "capitalize",
-                  }}
+              <div className="flex items-center justify-between">
+                <span
+                  className={`inline-flex h-7 items-center rounded-full px-3 text-xs font-bold uppercase tracking-wide ${ESTADO_STYLES[estado].pill}`}
                 >
                   {estado}
-                </h2>
-                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                </span>
+                <span
+                  className={`inline-flex items-center justify-center min-w-7 h-7 rounded-full text-xs font-semibold ${ESTADO_STYLES[estado].badge}`}
+                >
                   {grouped[estado].length}
                 </span>
               </div>
 
-              <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <div className="mt-4 grid gap-3">
                 {grouped[estado].length === 0 ? (
-                  <p style={{ fontSize: 13, opacity: 0.7, margin: 0 }}>
-                    Sin órdenes
-                  </p>
+                  <p className="text-sm text-gray-500">Sin órdenes</p>
                 ) : (
                   grouped[estado].map((o) => {
                     const e = normalizeEstado(o.estado);
@@ -186,66 +257,79 @@ export default function OrdenesPage() {
                     return (
                       <div
                         key={o.id}
-                        style={{
-                          border: "1px solid rgba(0,0,0,0.12)",
-                          borderRadius: 12,
-                          padding: 12,
-                        }}
+                        className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 transition-all duration-300 hover:bg-white hover:shadow-md"
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                          }}
-                        >
-                          <strong>Orden</strong>
-                          <span>{formatMoney(o.total)}</span>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="rounded-lg bg-white p-1.5 text-gray-500 shadow-sm">
+                              <ClipboardList className="h-3.5 w-3.5" />
+                            </div>
+                            <strong className="text-sm text-gray-800">
+                              Orden
+                            </strong>
+                            {o.visto === false && (
+                              <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-amber-400 text-gray-900">
+                                Nueva
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-sm font-semibold text-gray-800">
+                            {formatMoney(o.total)}
+                          </span>
                         </div>
 
-                        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+                        <div className="mt-2 text-xs text-gray-500">
                           {new Date(o.created_at).toLocaleString()}
                         </div>
 
-                        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                        <div className="mt-1 text-xs text-gray-500">
                           ID: {o.id.slice(0, 8)}…
                         </div>
 
-                        <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                        <div className="mt-3">
+                          <div className="text-xs font-bold text-gray-700 mb-2">
+                            Platos
+                          </div>
+
+                          {o.orden_items && o.orden_items.length > 0 ? (
+                            <div className="grid gap-1.5">
+                              {o.orden_items.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className="flex justify-between text-sm text-gray-700"
+                                >
+                                  <span>
+                                    {item.plato?.[0]?.nombre ?? "Plato sin nombre"}
+                                  </span>
+                                  <span className="font-medium">
+                                    x{item.cantidad ?? 1}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500">
+                              Sin platos cargados
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-4 flex gap-2">
                           <button
                             onClick={() => prev && moveEstado(o.id, prev)}
                             disabled={!prev || disabled}
-                            style={{
-                                padding: "6px 12px",
-                                borderRadius: 8,
-                                border: "none",
-                                background: "#e5e7eb",
-                                color: "#111",
-                                fontSize: 13,
-                                cursor: !prev || disabled ? "not-allowed" : "pointer",
-                                opacity: !prev || disabled ? 0.5 : 1,
-                            }}
-                        >
+                            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-200 text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300 transition-all hover:-translate-y-0.5"
+                          >
                             ← Atrás
                           </button>
 
                           <button
                             onClick={() => next && moveEstado(o.id, next)}
                             disabled={!next || disabled}
-                            style={{
-                                padding: "6px 12px",
-                                borderRadius: 8,
-                                border: "none",
-                                background: "#22c55e",
-                                color: "white",
-                                fontSize: 13,
-                                fontWeight: 500,
-                                cursor: !next || disabled ? "not-allowed" : "pointer",
-                                opacity: !next || disabled ? 0.5 : 1,
-                                marginLeft: "auto",
-                            }}
-                            >
+                            className="ml-auto px-3 py-1.5 rounded-lg text-sm font-medium bg-green-500 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-600 transition-all hover:-translate-y-0.5"
+                          >
                             Siguiente →
-                            </button>
+                          </button>
                         </div>
                       </div>
                     );
@@ -258,7 +342,7 @@ export default function OrdenesPage() {
       )}
 
       {!loading && !error && grouped.otros.length > 0 && (
-        <div style={{ marginTop: 18, fontSize: 12, opacity: 0.7 }}>
+        <div className="max-w-6xl mx-auto mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           Nota: Hay {grouped.otros.length} orden(es) con estado desconocido.
         </div>
       )}
