@@ -1,5 +1,5 @@
 import React from 'react';
-import { Utensils, ClipboardList, BarChart3, UserCircle, ArrowRight, Globe } from 'lucide-react';
+import { Utensils, ClipboardList, BarChart3, UserCircle, ArrowRight, Globe, Boxes } from 'lucide-react';
 import Link from 'next/link';
 
 const Dashboard = () => {
@@ -43,6 +43,14 @@ const Dashboard = () => {
       icono: <Globe className="w-8 h-8 text-cyan-600" />,
       link: "/dashboard/publica",
       color: "bg-cyan-50"
+    },
+    {
+      id: 6,
+      titulo: "STOCK",
+      descripcion: "Organiza secciones e ingredientes para reutilizarlos en tus items.",
+      icono: <Boxes className="w-8 h-8 text-emerald-600" />,
+      link: "/dashboard/stock",
+      color: "bg-emerald-50"
     },
   ];
 

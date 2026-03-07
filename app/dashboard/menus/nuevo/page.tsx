@@ -1,7 +1,6 @@
 "use client";
 
 import { type ChangeEvent, useCallback, useEffect, useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { ArrowLeft, Camera, Plus, Save, Send } from "lucide-react";
@@ -14,10 +13,20 @@ type AnalisisIA = {
   justificacion: string;
 };
 
-type PlatoListado = {
+type MenuSection = {
   id: string;
-  nombre?: string | null;
+  nombre: string;
   created_at: string;
+};
+
+type StockIngredient = {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  etiqueta_imagen_url: string | null;
+  alergenos: string[];
+  trazas: string[];
+  justificacion: string | null;
 };
 const ALERGENOS_PREDEFINIDOS = [
   "Gluten",
@@ -51,8 +60,20 @@ export default function MenuBuilderPage() {
   const [nombre, setNombrePlato] = useState("");
   const [descripcionPlato, setDescripcionPlato] = useState("");
   const [seccion, setSeccion] = useState("");
-  const [ingredienteInput, setIngredienteInput] = useState("");
   const [ingredientes, setIngredientes] = useState<string[]>([]);
+  const [stockIngredients, setStockIngredients] = useState<StockIngredient[]>([]);
+  const [selectedStockIngredientId, setSelectedStockIngredientId] = useState("");
+  const [stockIngredientesSectionId, setStockIngredientesSectionId] = useState<string | null>(null);
+  const [showStockIngredientModal, setShowStockIngredientModal] = useState(false);
+  const [guardandoStockIngredient, setGuardandoStockIngredient] = useState(false);
+  const [analizandoStockIngredient, setAnalizandoStockIngredient] = useState(false);
+  const [stockIngredientAnalisis, setStockIngredientAnalisis] = useState<AnalisisIA | null>(null);
+  const [stockIngredientDraft, setStockIngredientDraft] = useState({
+    nombre: "",
+    descripcion: "",
+    imagen: null as string | null,
+    instruccionesIA: "",
+  });
   const [alergenosSeleccionados, setAlergenosSeleccionados] = useState<string[]>([]);
   const [alergenoInput, setAlergenoInput] = useState("");
   const [imagen, setImagen] = useState<string | null>(null);
@@ -64,9 +85,10 @@ export default function MenuBuilderPage() {
   const [cargandoPlato, setCargandoPlato] = useState(false);
   const [mensajeError, setMensajeError] = useState<string | null>(null);
   const [analisis, setAnalisis] = useState<AnalisisIA | null>(null);
-  const [publicMenuUrl, setPublicMenuUrl] = useState<string>("");
-  const [platosMenu, setPlatosMenu] = useState<PlatoListado[]>([]);
-  const getNombrePlato = (plato: PlatoListado) => plato.nombre ?? "Item sin nombre";
+  const [sections, setSections] = useState<MenuSection[]>([]);
+  const [showSectionModal, setShowSectionModal] = useState(false);
+  const [sectionDraft, setSectionDraft] = useState("");
+  const [guardandoSeccion, setGuardandoSeccion] = useState(false);
 
   const puedeAnalizar =
     nombre.trim().length > 0 &&
@@ -81,11 +103,17 @@ export default function MenuBuilderPage() {
       return;
     }
     setIngredientes((prev) => [...prev, ingrediente]);
-    setIngredienteInput("");
   };
 
   const quitarIngrediente = (ingrediente: string) => {
     setIngredientes((prev) => prev.filter((item) => item !== ingrediente));
+  };
+
+  const agregarIngredienteDesdeStock = () => {
+    if (!selectedStockIngredientId) return;
+    const selected = stockIngredients.find((item) => item.id === selectedStockIngredientId);
+    if (!selected) return;
+    agregarIngrediente(selected.nombre);
   };
 
   const toggleAlergeno = (alergeno: string) => {
@@ -178,69 +206,107 @@ export default function MenuBuilderPage() {
     setCargandoPlato(false);
   }, [platoId, seccionParam]);
 
-  const loadPlatosMenu = useCallback(async () => {
+  const loadSections = useCallback(async () => {
     if (!menuId) return;
 
-    const { data: links, error: linksError } = await supabase
-      .from("menu_items")
-      .select("item_id")
+    const { data, error } = await supabase
+      .from("menu_sections")
+      .select("id, nombre, created_at")
       .eq("menu_id", menuId);
 
-    if (linksError) {
-      setMensajeError(`No se pudieron cargar relaciones del menú: ${linksError.message}`);
-      setPlatosMenu([]);
+    if (error) {
+      setMensajeError(`No se pudieron cargar las secciones: ${error.message}`);
+      setSections([]);
       return;
     }
 
-    if (!links || links.length === 0) {
-      setPlatosMenu([]);
-      return;
-    }
-
-    const platoIds = links
-      .map((row) => row.item_id as string | null)
-      .filter((id): id is string => Boolean(id));
-
-    if (platoIds.length === 0) {
-      setPlatosMenu([]);
-      return;
-    }
-
-    const { data: platos, error: platosError } = await supabase
-      .from("items")
-      .select("*")
-      .in("id", platoIds)
-      .order("created_at", { ascending: false });
-
-    if (platosError) {
-      setMensajeError(`No se pudieron cargar platos del menú: ${platosError.message}`);
-      setPlatosMenu([]);
-      return;
-    }
-
-    const platosNormalizados = (platos ?? []).map((plato) => ({
-      id: plato.id as string,
-      nombre: (plato.nombre as string | null | undefined) ?? null,
-      created_at: plato.created_at as string,
-    }));
-
-    setPlatosMenu(platosNormalizados);
+    setSections((data ?? []) as MenuSection[]);
   }, [menuId]);
+
+  const ensureDefaultStockSection = useCallback(async (restaurantId: string) => {
+    const findExisting = async () => {
+      const { data, error } = await supabase
+        .from("stock_sections")
+        .select("id, nombre, fixed")
+        .eq("restaurante_id", restaurantId)
+        .ilike("nombre", "Ingredientes")
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+      return data;
+    };
+
+    const existente = await findExisting();
+    if (existente) {
+      if (!existente.fixed) {
+        await supabase.from("stock_sections").update({ fixed: true }).eq("id", existente.id);
+      }
+      return existente.id as string;
+    }
+
+    const { data: creada, error: createError } = await supabase
+      .from("stock_sections")
+      .insert({
+        restaurante_id: restaurantId,
+        nombre: "Ingredientes",
+        fixed: true,
+      })
+      .select("id")
+      .single();
+
+    if (createError) {
+      if ((createError as { code?: string }).code === "23505") {
+        const existenteDespues = await findExisting();
+        if (existenteDespues) return existenteDespues.id as string;
+      }
+      throw new Error(createError.message);
+    }
+
+    if (!creada) throw new Error("No se pudo crear la sección Ingredientes");
+
+    return creada.id as string;
+  }, []);
+
+  const loadStockIngredients = useCallback(async () => {
+    const restaurantId = await getRestaurantId();
+    if (!restaurantId) return;
+
+    const defaultSectionId = await ensureDefaultStockSection(restaurantId);
+    setStockIngredientesSectionId(defaultSectionId);
+
+    const { data, error } = await supabase
+      .from("stock_ingredients")
+      .select("id, nombre, descripcion, etiqueta_imagen_url, alergenos, trazas, justificacion")
+      .eq("restaurante_id", restaurantId)
+      .eq("section_id", defaultSectionId)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      setMensajeError(`No se pudieron cargar ingredientes de stock: ${error.message}`);
+      setStockIngredients([]);
+      return;
+    }
+
+    const normalized = ((data ?? []) as any[]).map((row) => ({
+      ...row,
+      alergenos: Array.isArray(row.alergenos) ? row.alergenos : [],
+      trazas: Array.isArray(row.trazas) ? row.trazas : [],
+    })) as StockIngredient[];
+
+    setStockIngredients(normalized);
+    setSelectedStockIngredientId((prev) =>
+      prev && normalized.some((item) => item.id === prev) ? prev : normalized[0]?.id ?? ""
+    );
+  }, [ensureDefaultStockSection, getRestaurantId]);
 
   useEffect(() => {
     if (!menuId) return;
     void loadMenuMetadata();
-    void loadPlatosMenu();
-  }, [menuId, loadMenuMetadata, loadPlatosMenu]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(async () => {
-      const restaurantId = await getRestaurantId();
-      if (!restaurantId) return;
-      setPublicMenuUrl(`${window.location.origin}/publica?rid=${restaurantId}`);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [getRestaurantId]);
+    void loadSections();
+    void loadStockIngredients();
+  }, [menuId, loadMenuMetadata, loadSections, loadStockIngredients]);
 
   useEffect(() => {
     if (!platoId) return;
@@ -403,12 +469,10 @@ export default function MenuBuilderPage() {
       setIngredientes([]);
       setAlergenosSeleccionados([]);
       setAlergenoInput("");
-      setIngredienteInput("");
       setNotasInternas("");
       setInstruccionesIA("");
       setAnalisis(null);
 
-      await loadPlatosMenu();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Error al guardar el plato";
       setMensajeError(message);
@@ -426,6 +490,168 @@ export default function MenuBuilderPage() {
       </div>
     );
   }
+
+  const handleSaveSection = async () => {
+    if (!menuId) return;
+    const nombreSeccion = sectionDraft.trim();
+    if (!nombreSeccion) return;
+
+    const existe = sections.some(
+      (row) => row.nombre.trim().toLowerCase() === nombreSeccion.toLowerCase()
+    );
+    if (existe) {
+      setMensajeError("Esa sección ya existe en este menú.");
+      return;
+    }
+
+    setGuardandoSeccion(true);
+    setMensajeError(null);
+
+    const { data, error } = await supabase
+      .from("menu_sections")
+      .insert({ menu_id: menuId, nombre: nombreSeccion })
+      .select("id, nombre, created_at")
+      .single();
+
+    if (error || !data) {
+      setMensajeError(
+        `No se pudo crear la sección. Verifica que exista la tabla 'menu_sections' y sus políticas RLS. Detalle: ${error?.message ?? "sin detalle"}`
+      );
+      setGuardandoSeccion(false);
+      return;
+    }
+
+    setSections((prev) => [...prev, data as MenuSection]);
+    setSeccion(nombreSeccion);
+    setSectionDraft("");
+    setShowSectionModal(false);
+    setGuardandoSeccion(false);
+  };
+
+  const handleStockIngredientImage = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setStockIngredientDraft((prev) => ({ ...prev, imagen: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAnalyzeStockIngredient = async () => {
+    if (!stockIngredientDraft.nombre.trim()) {
+      setMensajeError("Añade nombre del ingrediente antes de analizar.");
+      return;
+    }
+
+    if (!stockIngredientDraft.descripcion.trim() && !stockIngredientDraft.imagen) {
+      setMensajeError("Añade descripción o imagen de etiqueta para analizar.");
+      return;
+    }
+
+    setAnalizandoStockIngredient(true);
+    setMensajeError(null);
+
+    try {
+      const response = await fetch("/api/analizar-plato", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombrePlato: stockIngredientDraft.nombre.trim(),
+          imagenBase64: stockIngredientDraft.imagen,
+          descripcionPlato: stockIngredientDraft.descripcion.trim(),
+          etiquetasIngredientes: [stockIngredientDraft.nombre.trim()],
+          instruccionesExtra: stockIngredientDraft.instruccionesIA.trim(),
+        }),
+      });
+
+      const payload = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        alergenos?: string[];
+        trazas?: string[];
+        justificacion?: string;
+      };
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error ?? "No se pudo analizar el ingrediente");
+      }
+
+      setStockIngredientAnalisis({
+        alergenos: payload.alergenos ?? [],
+        trazas: payload.trazas ?? [],
+        justificacion: payload.justificacion ?? "Sin justificación",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Error de conexión";
+      setMensajeError(message);
+    } finally {
+      setAnalizandoStockIngredient(false);
+    }
+  };
+
+  const resetStockIngredientModal = () => {
+    setStockIngredientDraft({
+      nombre: "",
+      descripcion: "",
+      imagen: null,
+      instruccionesIA: "",
+    });
+    setStockIngredientAnalisis(null);
+  };
+
+  const handleSaveStockIngredient = async () => {
+    const restaurantId = await getRestaurantId();
+    if (!restaurantId) {
+      router.push("/registro");
+      return;
+    }
+
+    if (!stockIngredientDraft.nombre.trim()) {
+      setMensajeError("El nombre del ingrediente es obligatorio.");
+      return;
+    }
+
+    const sectionId = stockIngredientesSectionId ?? (await ensureDefaultStockSection(restaurantId));
+    setStockIngredientesSectionId(sectionId);
+    setGuardandoStockIngredient(true);
+    setMensajeError(null);
+
+    const { data, error } = await supabase
+      .from("stock_ingredients")
+      .insert({
+        restaurante_id: restaurantId,
+        section_id: sectionId,
+        nombre: stockIngredientDraft.nombre.trim(),
+        descripcion: stockIngredientDraft.descripcion.trim() || null,
+        etiqueta_imagen_url: stockIngredientDraft.imagen,
+        alergenos: stockIngredientAnalisis?.alergenos ?? [],
+        trazas: stockIngredientAnalisis?.trazas ?? [],
+        justificacion: stockIngredientAnalisis?.justificacion ?? "Manual",
+      })
+      .select("id, nombre, descripcion, etiqueta_imagen_url, alergenos, trazas, justificacion")
+      .single();
+
+    if (error || !data) {
+      setMensajeError(error?.message ?? "No se pudo guardar el ingrediente de stock.");
+      setGuardandoStockIngredient(false);
+      return;
+    }
+
+    const nuevo = {
+      ...(data as StockIngredient),
+      alergenos: Array.isArray((data as any).alergenos) ? ((data as any).alergenos as string[]) : [],
+      trazas: Array.isArray((data as any).trazas) ? ((data as any).trazas as string[]) : [],
+    };
+
+    setStockIngredients((prev) => [...prev, nuevo].sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    setSelectedStockIngredientId(nuevo.id);
+    agregarIngrediente(nuevo.nombre);
+    setShowStockIngredientModal(false);
+    resetStockIngredientModal();
+    setGuardandoStockIngredient(false);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -453,8 +679,7 @@ export default function MenuBuilderPage() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
             <h2 className="mb-5 text-xl font-bold text-gray-900">
               1) Configura plato e ingredientes
             </h2>
@@ -480,13 +705,41 @@ export default function MenuBuilderPage() {
                 <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
                   Sección
                 </label>
-                <input
-                  type="text"
-                  value={seccion}
-                  onChange={(e) => setSeccion(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  placeholder="Ej: Bebidas"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={seccion}
+                    onChange={(e) => {
+                      if (e.target.value === "__nueva__") {
+                        setShowSectionModal(true);
+                        return;
+                      }
+                      setSeccion(e.target.value);
+                    }}
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">Sin sección</option>
+                    {Array.from(
+                      new Set(
+                        [...sections.map((row) => row.nombre), seccionParam ?? "", seccion]
+                          .map((value) => value.trim())
+                          .filter(Boolean)
+                      )
+                    ).map((nombreSeccion) => (
+                      <option key={nombreSeccion} value={nombreSeccion}>
+                        {nombreSeccion}
+                      </option>
+                    ))}
+                    <option value="__nueva__">+ Crear nueva sección</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowSectionModal(true)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Nueva
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -505,19 +758,40 @@ export default function MenuBuilderPage() {
                 <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
                   Ingredientes / etiquetas
                 </label>
-                <input
-                  type="text"
-                  value={ingredienteInput}
-                  onChange={(e) => setIngredienteInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      agregarIngrediente(ingredienteInput);
-                    }
-                  }}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  placeholder="Escribe un ingrediente y presiona Enter"
-                />
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={selectedStockIngredientId}
+                    onChange={(e) => setSelectedStockIngredientId(e.target.value)}
+                    className="min-w-[220px] flex-1 rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  >
+                    <option value="">Selecciona ingrediente de stock</option>
+                    {stockIngredients.map((ingredient) => (
+                      <option key={ingredient.id} value={ingredient.id}>
+                        {ingredient.nombre}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={agregarIngredienteDesdeStock}
+                    disabled={!selectedStockIngredientId}
+                    className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Añadir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowStockIngredientModal(true)}
+                    className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Nuevo ingrediente
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  Gestiona todos tus ingredientes en <Link href="/dashboard/stock" className="font-semibold text-blue-600 hover:underline">Stock</Link>.
+                </p>
                 <div className="mt-2 flex flex-wrap gap-2 rounded-xl border border-gray-100 bg-gray-50 p-3 min-h-12">
                   {ingredientes.length === 0 ? (
                     <p className="text-xs text-gray-500">Sin ingredientes cargados.</p>
@@ -730,58 +1004,199 @@ export default function MenuBuilderPage() {
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-              <h3 className="text-lg font-bold text-gray-900">Platos en este menú</h3>
-              <p className="mt-1 text-sm text-gray-500">{platosMenu.length} plato(s) guardado(s)</p>
-
-              {platosMenu.length === 0 ? (
-                <p className="mt-4 text-sm text-gray-500">Todavía no hay platos cargados.</p>
-              ) : (
-                <div className="mt-4 space-y-2">
-                  {platosMenu.map((plato) => (
-                    <div
-                      key={plato.id}
-                      className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-                    >
-                      <p className="text-sm font-semibold text-gray-800">
-                        {getNombrePlato(plato)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {new Date(plato.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {publicMenuUrl && (
-              <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-                <h3 className="text-sm font-bold text-gray-800">QR de página pública</h3>
-                <div className="mt-3 flex justify-center">
-                  <QRCodeSVG
-                    value={publicMenuUrl}
-                    size={110}
-                  />
-                </div>
-                <p className="mt-2 text-center text-xs text-gray-500">
-                  Este QR abre el menú activo del día.
-                </p>
-              </div>
-            )}
-           <Link
-              href={`/dashboard/menus/nuevo?menuId=${menuId}`}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
-            >
-              <Plus className="h-4 w-4" />
-              Agregar otro plato
-            </Link>
-          </div>
         </div>
       </div>
+
+      {showSectionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-gray-100 bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Crear sección</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Define el nombre de la sección para organizar los items del menú.
+            </p>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                Nombre de la sección
+              </label>
+              <input
+                type="text"
+                value={sectionDraft}
+                onChange={(e) => setSectionDraft(e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                placeholder="Ej: Entradas"
+              />
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSectionModal(false);
+                  setSectionDraft("");
+                }}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSection}
+                disabled={!sectionDraft.trim() || guardandoSeccion}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                {guardandoSeccion ? "Guardando..." : "Crear sección"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showStockIngredientModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-gray-100 bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-bold text-gray-900">Nuevo ingrediente</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Se guardará en Stock, dentro de la sección fija &quot;Ingredientes&quot;.
+            </p>
+
+            <div className="mt-4 grid gap-4">
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                  Nombre del ingrediente
+                </label>
+                <input
+                  type="text"
+                  value={stockIngredientDraft.nombre}
+                  onChange={(e) =>
+                    setStockIngredientDraft((prev) => ({ ...prev, nombre: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ej: Crema de leche"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                  Descripción / texto de etiqueta
+                </label>
+                <textarea
+                  value={stockIngredientDraft.descripcion}
+                  onChange={(e) =>
+                    setStockIngredientDraft((prev) => ({ ...prev, descripcion: e.target.value }))
+                  }
+                  className="h-24 w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Describe el ingrediente o pega texto relevante de la etiqueta"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                  Foto de etiqueta (opcional)
+                </label>
+                <div className="relative flex min-h-36 items-center justify-center rounded-2xl border-2 border-dashed border-gray-200 p-4 transition hover:border-blue-300 hover:bg-blue-50/40">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleStockIngredientImage}
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                  {stockIngredientDraft.imagen ? (
+                    <Image
+                      src={stockIngredientDraft.imagen}
+                      alt="Vista previa de etiqueta del ingrediente"
+                      width={640}
+                      height={360}
+                      className="max-h-52 w-auto rounded-xl object-cover"
+                    />
+                  ) : (
+                    <div className="text-center">
+                      <Camera className="mx-auto mb-2 h-10 w-10 text-gray-300" />
+                      <p className="text-sm font-medium text-gray-500">Subir foto de etiqueta</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-blue-600">
+                  Instrucciones para IA
+                </label>
+                <textarea
+                  value={stockIngredientDraft.instruccionesIA}
+                  onChange={(e) =>
+                    setStockIngredientDraft((prev) => ({
+                      ...prev,
+                      instruccionesIA: e.target.value,
+                    }))
+                  }
+                  className="h-20 w-full resize-none rounded-xl border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-900 placeholder:text-blue-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ej: prioriza detección de alérgenos por aditivos"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleAnalyzeStockIngredient}
+                disabled={analizandoStockIngredient}
+                className="inline-flex items-center gap-2 rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                <Send className="h-4 w-4" />
+                {analizandoStockIngredient ? "Analizando..." : "Analizar con IA"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveStockIngredient}
+                disabled={!stockIngredientDraft.nombre.trim() || guardandoStockIngredient}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+              >
+                <Save className="h-4 w-4" />
+                {guardandoStockIngredient ? "Guardando..." : "Guardar ingrediente"}
+              </button>
+            </div>
+
+            {stockIngredientAnalisis && (
+              <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                <h4 className="font-bold text-gray-900">Resultado IA</h4>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  <div className="rounded-xl bg-red-50 p-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-red-700">Alergenos</p>
+                    <p className="mt-1 text-sm text-red-900">
+                      {stockIngredientAnalisis.alergenos.length > 0
+                        ? stockIngredientAnalisis.alergenos.join(", ")
+                        : "Ninguno detectado"}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-amber-50 p-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Trazas</p>
+                    <p className="mt-1 text-sm text-amber-900">
+                      {stockIngredientAnalisis.trazas.length > 0
+                        ? stockIngredientAnalisis.trazas.join(", ")
+                        : "Sin trazas"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowStockIngredientModal(false);
+                  resetStockIngredientModal();
+                }}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
