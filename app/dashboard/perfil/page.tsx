@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { 
-  User, Mail, MapPin, CreditCard, Edit3, LogOut, ArrowLeft, Loader2, Save, X 
+  User, Mail, MapPin, CreditCard, Edit3, LogOut, ArrowLeft, Loader2, Save, Camera
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -18,6 +18,9 @@ export default function PerfilPage() {
   const [cargando, setCargando] = useState(true);
   const [editando, setEditando] = useState(false);
   const [guardando, setGuardando] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [restaurantId, setRestaurantId] = useState<string | null>(null);
+  const [logoInitialized, setLogoInitialized] = useState(false);
   
   const [perfil, setPerfil] = useState({
     nombre: "",
@@ -31,6 +34,10 @@ export default function PerfilPage() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) return router.push('/registro');
+        const savedLogo = localStorage.getItem(`restaurantLogo:${session.user.id}`);
+        setLogoUrl(savedLogo);
+        setRestaurantId(session.user.id);
+        setLogoInitialized(true);
 
         // Buscamos los datos usando el ID de la sesión directamente
         const { data: restaurante, error } = await supabase
@@ -56,6 +63,16 @@ export default function PerfilPage() {
     cargarDatos();
   }, [router]);
 
+  useEffect(() => {
+    if (!restaurantId || !logoInitialized) return;
+    const storageKey = `restaurantLogo:${restaurantId}`;
+    if (logoUrl) {
+      localStorage.setItem(storageKey, logoUrl);
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+  }, [logoUrl, restaurantId, logoInitialized]);
+
   const handleGuardar = async () => {
   setGuardando(true);
   
@@ -74,6 +91,12 @@ export default function PerfilPage() {
       }, { onConflict: 'id' });
 
     if (error) throw error;
+
+    if (logoUrl) {
+      localStorage.setItem(`restaurantLogo:${session.user.id}`, logoUrl);
+    } else {
+      localStorage.removeItem(`restaurantLogo:${session.user.id}`);
+    }
     
     setEditando(false);
     alert("¡Perfil guardado correctamente! 🎉");
@@ -85,6 +108,27 @@ export default function PerfilPage() {
   }
 };
 
+  const handleLogoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Selecciona un archivo de imagen válido.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("La imagen no puede superar 5MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setLogoUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   if (cargando) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
@@ -94,18 +138,48 @@ export default function PerfilPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-6 text-black">
       <div className="max-w-2xl mx-auto">
-        <Link href="/dashboard" className="flex items-center text-gray-500 hover:text-black mb-8 transition-colors w-fit font-medium">
-          <ArrowLeft className="w-5 h-5 mr-2" /> Volver al Panel
+        <Link
+          href="/dashboard"
+          className="mb-8 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-gray-100 hover:shadow-md"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver al Panel
         </Link>
 
         <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
           {/* HEADER */}
           <div className="bg-gradient-to-r from-blue-600 to-blue-400 p-8 text-white">
-            <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mb-4">
-              <User className="w-10 h-10 text-white" />
+            <div className="flex items-center gap-4">
+              <div className="shrink-0">
+                {editando ? (
+                  <label className="relative flex h-20 w-20 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-white/40 bg-white/20 backdrop-blur-md transition hover:bg-white/30">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="Logo del restaurante" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center">
+                        <Camera className="h-5 w-5 text-white" />
+                        <span className="mt-1 text-[9px] font-bold uppercase tracking-wide text-white">
+                          Añadir Logo
+                        </span>
+                      </div>
+                    )}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleLogoChange} />
+                  </label>
+                ) : (
+                  <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-white/40 bg-white/20 backdrop-blur-md">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="Logo del restaurante" className="h-full w-full object-cover" />
+                    ) : (
+                      <User className="h-10 w-10 text-white" />
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-2xl font-black">{editando ? "Editando Perfil" : perfil.nombre}</h1>
+                <p className="text-blue-100 opacity-80 text-sm font-medium">Gestiona los datos de tu restaurante</p>
+              </div>
             </div>
-            <h1 className="text-2xl font-black">{editando ? "Editando Perfil" : perfil.nombre}</h1>
-            <p className="text-blue-100 opacity-80 text-sm font-medium">Gestiona los datos de tu restaurante</p>
           </div>
 
           <div className="p-8 space-y-6">

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import type { PostgrestError } from "@supabase/supabase-js";
 import Link from "next/link";
-import { ArrowLeft, ClipboardList } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, ClipboardList } from "lucide-react";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -69,6 +69,9 @@ export default function OrdenesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ordenes, setOrdenes] = useState<Orden[]>([]);
+  const [orderNumbers, setOrderNumbers] = useState<Record<string, number>>({});
+  const [nextOrderNumber, setNextOrderNumber] = useState(1);
+  const [numbersReady, setNumbersReady] = useState(false);
 
   const fetchOrdenes = async (): Promise<{
     data: Orden[];
@@ -152,6 +155,58 @@ export default function OrdenesPage() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const rawMap = localStorage.getItem("ordenes:number-map");
+      const rawNext = localStorage.getItem("ordenes:number-next");
+
+      if (rawMap) {
+        const parsed = JSON.parse(rawMap) as Record<string, number>;
+        setOrderNumbers(parsed);
+      }
+
+      if (rawNext) {
+        const parsedNext = Number(rawNext);
+        if (!Number.isNaN(parsedNext) && parsedNext >= 1 && parsedNext <= 100) {
+          setNextOrderNumber(parsedNext);
+        }
+      }
+    } catch {
+      // Ignore corrupt local data and rebuild progressively.
+    } finally {
+      setNumbersReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!numbersReady) return;
+    localStorage.setItem("ordenes:number-map", JSON.stringify(orderNumbers));
+    localStorage.setItem("ordenes:number-next", String(nextOrderNumber));
+  }, [orderNumbers, nextOrderNumber, numbersReady]);
+
+  useEffect(() => {
+    if (!numbersReady || ordenes.length === 0) return;
+
+    const sorted = [...ordenes].sort(
+      (a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+
+    let next = nextOrderNumber;
+    const additions: Record<string, number> = {};
+
+    for (const orden of sorted) {
+      if (orderNumbers[orden.id]) continue;
+      additions[orden.id] = next;
+      next = next === 100 ? 1 : next + 1;
+    }
+
+    if (Object.keys(additions).length === 0) return;
+
+    setOrderNumbers((prev) => ({ ...prev, ...additions }));
+    setNextOrderNumber(next);
+  }, [ordenes, orderNumbers, nextOrderNumber, numbersReady]);
+
   const grouped = useMemo(() => {
     const map: Record<string, Orden[]> = {
       pendiente: [],
@@ -174,7 +229,7 @@ export default function OrdenesPage() {
 
     const { error } = await supabase
       .from("ordenes")
-      .update({ estado: next })
+      .update({ estado: next, visto: true })
       .eq("id", ordenId);
 
     if (error) {
@@ -199,9 +254,6 @@ export default function OrdenesPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-end gap-3">
             <h1 className="text-4xl font-black text-gray-900">Órdenes</h1>
-            <span className="text-sm font-medium text-gray-500">
-              Vista en vivo (Pendiente → Preparando → Listo)
-            </span>
           </div>
           <Link
             href="/dashboard"
@@ -253,6 +305,10 @@ export default function OrdenesPage() {
                     const prev = e === "otros" ? null : prevEstado(e);
                     const next = e === "otros" ? null : nextEstado(e);
                     const disabled = busyId === o.id;
+                    const orderNumber = orderNumbers[o.id];
+                    const orderLabel = orderNumber
+                      ? `Orden #${String(orderNumber).padStart(3, "0")}`
+                      : "Orden #---";
 
                     return (
                       <div
@@ -265,7 +321,7 @@ export default function OrdenesPage() {
                               <ClipboardList className="h-3.5 w-3.5" />
                             </div>
                             <strong className="text-sm text-gray-800">
-                              Orden
+                              {orderLabel}
                             </strong>
                             {o.visto === false && (
                               <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-amber-400 text-gray-900">
@@ -279,11 +335,13 @@ export default function OrdenesPage() {
                         </div>
 
                         <div className="mt-2 text-xs text-gray-500">
-                          {new Date(o.created_at).toLocaleString()}
-                        </div>
-
-                        <div className="mt-1 text-xs text-gray-500">
-                          ID: {o.id.slice(0, 8)}…
+                          {new Date(o.created_at).toLocaleString(undefined, {
+                            year: "numeric",
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </div>
 
                         <div className="mt-3">
@@ -314,22 +372,32 @@ export default function OrdenesPage() {
                           )}
                         </div>
 
-                        <div className="mt-4 flex gap-2">
-                          <button
-                            onClick={() => prev && moveEstado(o.id, prev)}
-                            disabled={!prev || disabled}
-                            className="px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-200 text-gray-800 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300 transition-all hover:-translate-y-0.5"
-                          >
-                            ← Atrás
-                          </button>
+                        <div className="mt-4 flex items-center justify-between">
+                          {prev ? (
+                            <button
+                              onClick={() => moveEstado(o.id, prev)}
+                              disabled={disabled}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-gray-100 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label="Mover al estado anterior"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <div />
+                          )}
 
-                          <button
-                            onClick={() => next && moveEstado(o.id, next)}
-                            disabled={!next || disabled}
-                            className="ml-auto px-3 py-1.5 rounded-lg text-sm font-medium bg-green-500 text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-green-600 transition-all hover:-translate-y-0.5"
-                          >
-                            Siguiente →
-                          </button>
+                          {next ? (
+                            <button
+                              onClick={() => moveEstado(o.id, next)}
+                              disabled={disabled}
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-green-600 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-green-700 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label="Mover al siguiente estado"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <div />
+                          )}
                         </div>
                       </div>
                     );
