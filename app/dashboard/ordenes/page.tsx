@@ -23,6 +23,10 @@ type OrdenItem = {
 type Orden = {
   id: string;
   restaurante_id: string;
+  numero_orden: number | null;
+  cliente_nombre: string | null;
+  tipo_servicio: "takeaway" | "mesa" | null;
+  numero_mesa: string | null;
   estado: string | null;
   total: number | null;
   created_at: string;
@@ -55,7 +59,7 @@ const ESTADO_STYLES: Record<
 
 function formatMoney(value: number | null) {
   if (value == null) return "—";
-  return `$${value}`;
+  return `$${value.toFixed(2)}`;
 }
 
 function normalizeEstado(e: string | null): Estado | "otros" {
@@ -69,9 +73,6 @@ export default function OrdenesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ordenes, setOrdenes] = useState<Orden[]>([]);
-  const [orderNumbers, setOrderNumbers] = useState<Record<string, number>>({});
-  const [nextOrderNumber, setNextOrderNumber] = useState(1);
-  const [numbersReady, setNumbersReady] = useState(false);
 
   const fetchOrdenes = async (): Promise<{
     data: Orden[];
@@ -80,25 +81,29 @@ export default function OrdenesPage() {
     const { data, error } = await supabase
       .from("ordenes")
       .select(`
+        id,
+        restaurante_id,
+        numero_orden,
+        cliente_nombre,
+        tipo_servicio,
+        numero_mesa,
+        estado,
+        total,
+        created_at,
+        visto,
+        orden_items (
+          id,
+          cantidad,
+          item:items (
             id,
-            restaurante_id,
-            estado,
-            total,
-            created_at,
-            visto,
-            orden_items (
-                id,
-                cantidad,
-                item:items (
-                id,
-                nombre
-                )
-            )
-            `)
+            nombre
+          )
+        )
+      `)
       .order("created_at", { ascending: false })
       .limit(50);
 
-    return { data: data ?? [], error };
+    return { data: (data ?? []) as Orden[], error };
   };
 
   const loadOrdenes = async () => {
@@ -154,58 +159,6 @@ export default function OrdenesPage() {
       supabase.removeChannel(channel);
     };
   }, []);
-
-  useEffect(() => {
-    try {
-      const rawMap = localStorage.getItem("ordenes:number-map");
-      const rawNext = localStorage.getItem("ordenes:number-next");
-
-      if (rawMap) {
-        const parsed = JSON.parse(rawMap) as Record<string, number>;
-        setOrderNumbers(parsed);
-      }
-
-      if (rawNext) {
-        const parsedNext = Number(rawNext);
-        if (!Number.isNaN(parsedNext) && parsedNext >= 1 && parsedNext <= 100) {
-          setNextOrderNumber(parsedNext);
-        }
-      }
-    } catch {
-      // Ignore corrupt local data and rebuild progressively.
-    } finally {
-      setNumbersReady(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!numbersReady) return;
-    localStorage.setItem("ordenes:number-map", JSON.stringify(orderNumbers));
-    localStorage.setItem("ordenes:number-next", String(nextOrderNumber));
-  }, [orderNumbers, nextOrderNumber, numbersReady]);
-
-  useEffect(() => {
-    if (!numbersReady || ordenes.length === 0) return;
-
-    const sorted = [...ordenes].sort(
-      (a, b) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-
-    let next = nextOrderNumber;
-    const additions: Record<string, number> = {};
-
-    for (const orden of sorted) {
-      if (orderNumbers[orden.id]) continue;
-      additions[orden.id] = next;
-      next = next === 100 ? 1 : next + 1;
-    }
-
-    if (Object.keys(additions).length === 0) return;
-
-    setOrderNumbers((prev) => ({ ...prev, ...additions }));
-    setNextOrderNumber(next);
-  }, [ordenes, orderNumbers, nextOrderNumber, numbersReady]);
 
   const grouped = useMemo(() => {
     const map: Record<string, Orden[]> = {
@@ -305,24 +258,21 @@ export default function OrdenesPage() {
                     const prev = e === "otros" ? null : prevEstado(e);
                     const next = e === "otros" ? null : nextEstado(e);
                     const disabled = busyId === o.id;
-                    const orderNumber = orderNumbers[o.id];
-                    const orderLabel = orderNumber
-                      ? `Orden #${String(orderNumber).padStart(3, "0")}`
-                      : "Orden #---";
+                    const orderLabel = o.numero_orden
+                      ? `Orden #${String(o.numero_orden).padStart(3, "0")}`
+                      : `Orden ${o.id.slice(0, 8)}`;
 
                     return (
                       <div
                         key={o.id}
                         className="rounded-xl border border-gray-100 bg-gray-50/70 p-4 transition-all duration-300 hover:bg-white hover:shadow-md"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2">
                             <div className="rounded-lg bg-white p-1.5 text-gray-500 shadow-sm">
                               <ClipboardList className="h-3.5 w-3.5" />
                             </div>
-                            <strong className="text-sm text-gray-800">
-                              {orderLabel}
-                            </strong>
+                            <strong className="text-sm text-gray-800">{orderLabel}</strong>
                             {o.visto === false && (
                               <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-amber-400 text-gray-900">
                                 Nueva
@@ -344,9 +294,21 @@ export default function OrdenesPage() {
                           })}
                         </div>
 
+                        <div className="mt-2 rounded-lg border border-gray-100 bg-white p-2 text-xs text-gray-700">
+                          <p><span className="font-semibold">Cliente:</span> {o.cliente_nombre ?? "—"}</p>
+                          <p>
+                            <span className="font-semibold">Servicio:</span>{" "}
+                            {o.tipo_servicio === "mesa"
+                              ? `Mesa ${o.numero_mesa ?? "—"}`
+                              : o.tipo_servicio === "takeaway"
+                                ? "Takeaway"
+                                : "—"}
+                          </p>
+                        </div>
+
                         <div className="mt-3">
                           <div className="text-xs font-bold text-gray-700 mb-2">
-                            Platos
+                            Items
                           </div>
 
                           {o.orden_items && o.orden_items.length > 0 ? (
@@ -367,7 +329,7 @@ export default function OrdenesPage() {
                             </div>
                           ) : (
                             <div className="text-xs text-gray-500">
-                              Sin platos cargados
+                              Sin items cargados
                             </div>
                           )}
                         </div>
@@ -383,20 +345,20 @@ export default function OrdenesPage() {
                               <ChevronLeft className="h-4 w-4" />
                             </button>
                           ) : (
-                            <div />
+                            <span className="h-9 w-9" aria-hidden="true" />
                           )}
 
                           {next ? (
                             <button
                               onClick={() => moveEstado(o.id, next)}
                               disabled={disabled}
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-green-600 text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-green-700 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-gray-100 hover:shadow disabled:cursor-not-allowed disabled:opacity-50"
                               aria-label="Mover al siguiente estado"
                             >
                               <ChevronRight className="h-4 w-4" />
                             </button>
                           ) : (
-                            <div />
+                            <span className="h-9 w-9" aria-hidden="true" />
                           )}
                         </div>
                       </div>
@@ -408,14 +370,8 @@ export default function OrdenesPage() {
           ))}
         </div>
       )}
-
-      {!loading && !error && grouped.otros.length > 0 && (
-        <div className="max-w-6xl mx-auto mt-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Nota: Hay {grouped.otros.length} orden(es) con estado desconocido.
-        </div>
-      )}
     </div>
   );
 }
 
-// PAGE_INFO: Módulo de órdenes del dashboard.
+// PAGE_INFO: Tablero en vivo de órdenes con datos de cliente y tipo de servicio.

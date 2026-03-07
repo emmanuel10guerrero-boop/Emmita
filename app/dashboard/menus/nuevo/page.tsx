@@ -60,6 +60,8 @@ export default function MenuBuilderPage() {
   const [nombre, setNombrePlato] = useState("");
   const [descripcionPlato, setDescripcionPlato] = useState("");
   const [seccion, setSeccion] = useState("");
+  const [precio, setPrecio] = useState("");
+  const [ingredienteInput, setIngredienteInput] = useState("");
   const [ingredientes, setIngredientes] = useState<string[]>([]);
   const [stockIngredients, setStockIngredients] = useState<StockIngredient[]>([]);
   const [selectedStockIngredientId, setSelectedStockIngredientId] = useState("");
@@ -195,6 +197,11 @@ export default function MenuBuilderPage() {
     setNombrePlato((data.nombre as string | null) ?? "");
     setDescripcionPlato((data.descripcion as string | null) ?? "");
     setSeccion((data.seccion as string | null) ?? seccionParam ?? "");
+    setPrecio(
+      typeof data.precio === "number" && Number.isFinite(data.precio)
+        ? String(data.precio)
+        : ""
+    );
     setImagen((data.imagen_url as string | null) ?? null);
     setAlergenosSeleccionados(Array.isArray(data.alergenos) ? data.alergenos : []);
     setNotasInternas((data.notas_internas as string | null) ?? "");
@@ -406,6 +413,7 @@ export default function MenuBuilderPage() {
         restaurante_id: restaurantId,
         descripcion: descripcionPlato.trim() || null,
         seccion: seccion.trim() || null,
+        precio: precio.trim() ? Number(precio) : null,
         imagen_url: imagen,
         activo: true,
         alergenos: alergenosSeleccionados,
@@ -465,6 +473,7 @@ export default function MenuBuilderPage() {
       setNombrePlato("");
       setDescripcionPlato("");
       setSeccion(seccionParam ?? "");
+      setPrecio("");
       setImagen(null);
       setIngredientes([]);
       setAlergenosSeleccionados([]);
@@ -740,6 +749,21 @@ export default function MenuBuilderPage() {
                     Nueva
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                  Precio
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={precio}
+                  onChange={(e) => setPrecio(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ej: 12.50"
+                />
               </div>
 
               <div>
