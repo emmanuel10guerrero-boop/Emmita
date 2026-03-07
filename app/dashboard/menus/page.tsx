@@ -41,44 +41,57 @@ export default function MenusPage() {
     return data.user.id;
   };
 
-  const handleCrearMenu = async () => {
-  if (!nombreMenu.trim()) return;
+const handleCrearMenu = async () => {
+    if (!nombreMenu.trim()) return;
 
-  setGuardando(true);
-  setError(null);
+    setGuardando(true);
+    setError(null);
 
-  const restauranteId = await getRestaurantId();
-  if (!restauranteId) {
-    setGuardando(false);
-    router.push("/registro");
-    return;
-  }
+    const restauranteId = await getRestaurantId();
+    if (!restauranteId) {
+      setGuardando(false);
+      router.push("/registro");
+      return;
+    }
 
-  const { data, error } = await supabase
-    .from("menus")
-    .insert({
-      restaurante_id: restauranteId,
-      nombre: nombreMenu.trim(),
-      descripcion: descripcion.trim() || null,
-      activo: false,
-    })
-    .select("id")
-    .single();
+    // Insertamos y usamos maybeSingle para que no de error si el RLS es lento
+    const { data, error: insertError } = await supabase
+      .from("menus")
+      .insert({
+        restaurante_id: restauranteId,
+        nombre: nombreMenu.trim(),
+        descripcion: descripcion.trim() || null,
+        activo: false,
+      })
+      .select("id")
+      .maybeSingle(); 
 
-  if (error) {
-    setError(error.message);
-    setGuardando(false);
-    return;
-  }
+    if (insertError) {
+      setError("Error de base de datos: " + insertError.message);
+      setGuardando(false);
+      return;
+    }
 
-  router.push(`/dashboard/menus/nuevo?menuId=${data.id}`);
-};
+    // Si se guardó pero no devolvió el ID, recargamos para que aparezca en la lista
+    if (!data) {
+        window.location.reload(); 
+        return;
+    }
 
-  useEffect(() => {
+    // Si todo ok, vamos a la página de agregar platos
+    router.push(`/dashboard/menus/nuevo?menuId=${data.id}`);
+  };
+
+useEffect(() => {
     const loadMenus = async () => {
+      // Obtenemos el usuario actual para filtrar
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
       const { data, error } = await supabase
         .from("menus")
-        .select("id, restaurante_id, nombre, descripcion, activo, created_at")
+        .select("*")
+        .eq('restaurante_id', user.id) // Solo trae mis menús
         .order("created_at", { ascending: false });
 
       if (error) {
