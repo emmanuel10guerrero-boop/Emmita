@@ -45,7 +45,7 @@ export default function PaginaAuth() {
       } else {
         await supabase.from('restaurantes').insert([{ 
           id: authData.user?.id, 
-          nombre_establecimiento: nombre, 
+          nombre_restaurante: nombre, 
           email: email 
         }]);
         localStorage.setItem('restaurantId', authData.user?.id || '');
@@ -125,3 +125,4 @@ export default function PaginaAuth() {
     </div>
   );
 }
+// PAGE_INFO: Registro del restaurante/usuario para habilitar el sistema.

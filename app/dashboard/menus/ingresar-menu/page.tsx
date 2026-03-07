@@ -12,3 +12,5 @@ export default function LegacyIngresarMenuPage() {
 
   return null;
 }
+
+// PAGE_INFO: Pantalla intermedia de ingreso/selección de menú.

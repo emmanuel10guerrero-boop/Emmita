@@ -10,10 +10,12 @@ export default function LegacyIngresarMenuPlatosPage() {
 
   useEffect(() => {
     const destination = menuId
-      ? `/dashboard/menus/nuevo?menuId=${menuId}`
+      ? `/dashboard/menus/platos?menuId=${menuId}`
       : "/dashboard/menus";
     router.replace(destination);
   }, [menuId, router]);
 
   return null;
 }
+
+// PAGE_INFO: Ruta legacy que redirige al listado de platos del menú.

@@ -14,7 +14,7 @@ const supabase = createClient(
 type OrdenItem = {
   id: string;
   cantidad: number | null;
-  plato: {
+  item: {
     id: string;
     nombre: string | null;
   }[] | null;
@@ -86,7 +86,7 @@ export default function OrdenesPage() {
             orden_items (
                 id,
                 cantidad,
-                plato:platos (
+                item:items (
                 id,
                 nombre
                 )
@@ -299,7 +299,7 @@ export default function OrdenesPage() {
                                   className="flex justify-between text-sm text-gray-700"
                                 >
                                   <span>
-                                    {item.plato?.[0]?.nombre ?? "Plato sin nombre"}
+                                    {item.item?.[0]?.nombre ?? "Item sin nombre"}
                                   </span>
                                   <span className="font-medium">
                                     x{item.cantidad ?? 1}
@@ -349,3 +349,5 @@ export default function OrdenesPage() {
     </div>
   );
 }
+
+// PAGE_INFO: Módulo de órdenes del dashboard.

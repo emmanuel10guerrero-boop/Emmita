@@ -37,3 +37,5 @@ export default function RootPage() {
   );
 }
 
+
+// PAGE_INFO: Landing principal para capturar/analizar platos con IA.
