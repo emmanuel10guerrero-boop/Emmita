@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 
@@ -9,19 +9,23 @@ const supabase = createClient(
 );
 
 export default function HistorialPlatos() {
-  const [platos, setPlatos] = useState<any[]>([]);
+  type ItemHistorial = {
+    id: string;
+    nombre: string | null;
+    trazas: string[] | string | null;
+    justificacion: string | null;
+    created_at: string;
+  };
+
+  const [platos, setPlatos] = useState<ItemHistorial[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [platoSeleccionado, setPlatoSeleccionado] = useState<any>(null); // Estado para el modal
+  const [platoSeleccionado, setPlatoSeleccionado] = useState<ItemHistorial | null>(null); // Estado para el modal
   const router = useRouter();
 
-  const getNombrePlato = (plato: any) =>
-    plato?.nombreplato ?? plato?.nombre_plato ?? plato?.nombre ?? 'Plato sin nombre';
+  const getNombrePlato = (plato: ItemHistorial | null) =>
+    plato?.nombre ?? 'Item sin nombre';
 
-  useEffect(() => {
-    cargarPlatos();
-  }, []);
-
-  const cargarPlatos = async () => {
+  const cargarPlatos = useCallback(async () => {
     const restaurantId = localStorage.getItem('restaurantId');
     if (!restaurantId) {
       router.push('/registro');
@@ -29,14 +33,21 @@ export default function HistorialPlatos() {
     }
 
     const { data, error } = await supabase
-      .from('platos')
+      .from('items')
       .select('*')
       .eq('restaurante_id', restaurantId)
       .order('created_at', { ascending: false });
 
-    if (!error) setPlatos(data || []);
+    if (!error) setPlatos((data || []) as ItemHistorial[]);
     setCargando(false);
-  };
+  }, [router]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void cargarPlatos();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [cargarPlatos]);
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans">
@@ -139,3 +150,5 @@ export default function HistorialPlatos() {
     </div>
   );
 }
+
+// PAGE_INFO: Historial de platos analizados y vista de detalle en modal.

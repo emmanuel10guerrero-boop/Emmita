@@ -1,5 +1,5 @@
 import React from 'react';
-import { Utensils, ClipboardList, BarChart3, UserCircle, ArrowRight } from 'lucide-react';
+import { Utensils, ClipboardList, BarChart3, UserCircle, ArrowRight, Globe } from 'lucide-react';
 import Link from 'next/link';
 
 const Dashboard = () => {
@@ -35,7 +35,15 @@ const Dashboard = () => {
       icono: <UserCircle className="w-8 h-8 text-orange-600" />,
       link: "/dashboard/perfil",
       color: "bg-orange-50"
-    }
+    },
+    {
+      id: 5,
+      titulo: "PÁGINA PÚBLICA",
+      descripcion: "Administra enlaces públicos y QR visibles para clientes.",
+      icono: <Globe className="w-8 h-8 text-cyan-600" />,
+      link: "/dashboard/publica",
+      color: "bg-cyan-50"
+    },
   ];
 
   return (
@@ -68,3 +76,4 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
+// PAGE_INFO: Panel principal del dashboard con accesos a módulos.

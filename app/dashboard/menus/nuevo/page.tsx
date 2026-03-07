@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
@@ -16,7 +16,7 @@ type AnalisisIA = {
 
 type PlatoListado = {
   id: string;
-  nombreplato: string | null;
+  nombre?: string | null;
   created_at: string;
 };
 const ALERGENOS_PREDEFINIDOS = [
@@ -43,10 +43,14 @@ export default function MenuBuilderPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const menuId = searchParams.get("menuId");
+  const platoId = searchParams.get("platoId");
+  const seccionParam = searchParams.get("seccion");
+  const isEditing = Boolean(platoId);
 
   const [menuNombre, setMenuNombre] = useState<string>("");
-  const [nombrePlato, setNombrePlato] = useState("");
+  const [nombre, setNombrePlato] = useState("");
   const [descripcionPlato, setDescripcionPlato] = useState("");
+  const [seccion, setSeccion] = useState("");
   const [ingredienteInput, setIngredienteInput] = useState("");
   const [ingredientes, setIngredientes] = useState<string[]>([]);
   const [alergenosSeleccionados, setAlergenosSeleccionados] = useState<string[]>([]);
@@ -57,16 +61,18 @@ export default function MenuBuilderPage() {
 
   const [cargandoAnalisis, setCargandoAnalisis] = useState(false);
   const [guardandoPlato, setGuardandoPlato] = useState(false);
+  const [cargandoPlato, setCargandoPlato] = useState(false);
   const [mensajeError, setMensajeError] = useState<string | null>(null);
   const [analisis, setAnalisis] = useState<AnalisisIA | null>(null);
-  const [ultimoPlatoId, setUltimoPlatoId] = useState<string | null>(null);
+  const [publicMenuUrl, setPublicMenuUrl] = useState<string>("");
   const [platosMenu, setPlatosMenu] = useState<PlatoListado[]>([]);
+  const getNombrePlato = (plato: PlatoListado) => plato.nombre ?? "Item sin nombre";
 
   const puedeAnalizar =
-    nombrePlato.trim().length > 0 &&
+    nombre.trim().length > 0 &&
     (imagen !== null || descripcionPlato.trim().length > 0 || ingredientes.length > 0);
 
-  const puedeGuardar = nombrePlato.trim().length > 0;
+  const puedeGuardar = nombre.trim().length > 0;
 
   const agregarIngrediente = (raw: string) => {
     const ingrediente = raw.trim();
@@ -108,7 +114,7 @@ export default function MenuBuilderPage() {
     setAlergenosSeleccionados((prev) => prev.filter((item) => item !== alergeno));
   };
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -140,21 +146,59 @@ export default function MenuBuilderPage() {
     if (data?.nombre) setMenuNombre(data.nombre);
   }, [menuId]);
 
+  const loadPlatoParaEditar = useCallback(async () => {
+    if (!platoId) return;
+
+    setCargandoPlato(true);
+    setMensajeError(null);
+
+    const { data, error } = await supabase
+      .from("items")
+      .select("*")
+      .eq("id", platoId)
+      .single();
+
+    if (error || !data) {
+      setMensajeError(error?.message ?? "No se pudo cargar el plato a editar.");
+      setCargandoPlato(false);
+      return;
+    }
+
+    setNombrePlato((data.nombre as string | null) ?? "");
+    setDescripcionPlato((data.descripcion as string | null) ?? "");
+    setSeccion((data.seccion as string | null) ?? seccionParam ?? "");
+    setImagen((data.imagen_url as string | null) ?? null);
+    setAlergenosSeleccionados(Array.isArray(data.alergenos) ? data.alergenos : []);
+    setNotasInternas((data.notas_internas as string | null) ?? "");
+    setAnalisis({
+      alergenos: Array.isArray(data.alergenos) ? data.alergenos : [],
+      trazas: Array.isArray(data.trazas) ? data.trazas : [],
+      justificacion: (data.justificacion as string | null) ?? "Sin justificación",
+    });
+    setCargandoPlato(false);
+  }, [platoId, seccionParam]);
+
   const loadPlatosMenu = useCallback(async () => {
     if (!menuId) return;
 
     const { data: links, error: linksError } = await supabase
-      .from("menu_platos")
-      .select("plato_id")
+      .from("menu_items")
+      .select("item_id")
       .eq("menu_id", menuId);
 
-    if (linksError || !links || links.length === 0) {
+    if (linksError) {
+      setMensajeError(`No se pudieron cargar relaciones del menú: ${linksError.message}`);
+      setPlatosMenu([]);
+      return;
+    }
+
+    if (!links || links.length === 0) {
       setPlatosMenu([]);
       return;
     }
 
     const platoIds = links
-      .map((row) => row.plato_id as string | null)
+      .map((row) => row.item_id as string | null)
       .filter((id): id is string => Boolean(id));
 
     if (platoIds.length === 0) {
@@ -163,17 +207,24 @@ export default function MenuBuilderPage() {
     }
 
     const { data: platos, error: platosError } = await supabase
-      .from("platos")
-      .select("id, nombreplato, created_at")
+      .from("items")
+      .select("*")
       .in("id", platoIds)
       .order("created_at", { ascending: false });
 
     if (platosError) {
+      setMensajeError(`No se pudieron cargar platos del menú: ${platosError.message}`);
       setPlatosMenu([]);
       return;
     }
 
-    setPlatosMenu((platos ?? []) as PlatoListado[]);
+    const platosNormalizados = (platos ?? []).map((plato) => ({
+      id: plato.id as string,
+      nombre: (plato.nombre as string | null | undefined) ?? null,
+      created_at: plato.created_at as string,
+    }));
+
+    setPlatosMenu(platosNormalizados);
   }, [menuId]);
 
   useEffect(() => {
@@ -181,6 +232,25 @@ export default function MenuBuilderPage() {
     void loadMenuMetadata();
     void loadPlatosMenu();
   }, [menuId, loadMenuMetadata, loadPlatosMenu]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      const restaurantId = await getRestaurantId();
+      if (!restaurantId) return;
+      setPublicMenuUrl(`${window.location.origin}/publica?rid=${restaurantId}`);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [getRestaurantId]);
+
+  useEffect(() => {
+    if (!platoId) return;
+    void loadPlatoParaEditar();
+  }, [platoId, loadPlatoParaEditar]);
+
+  useEffect(() => {
+    if (isEditing) return;
+    setSeccion(seccionParam ?? "");
+  }, [isEditing, seccionParam]);
 
   const analizarPlato = async () => {
     if (!menuId) {
@@ -203,7 +273,7 @@ export default function MenuBuilderPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nombrePlato: nombrePlato.trim(),
+          nombrePlato: nombre.trim(),
           imagenBase64: imagen,
           descripcionPlato: descripcionPlato.trim(),
           etiquetasIngredientes: ingredientes,
@@ -259,58 +329,88 @@ export default function MenuBuilderPage() {
 
     const notasCompletas = [
       notasInternas.trim() ? `Notas internas: ${notasInternas.trim()}` : null,
-      descripcionPlato.trim()
-        ? `Descripcion declarada: ${descripcionPlato.trim()}`
-        : null,
-      ingredientes.length > 0
-        ? `Ingredientes declarados: ${ingredientes.join(", ")}`
-        : null,
-      analisis?.justificacion
-        ? `Resumen IA: ${analisis.justificacion}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
+      descripcionPlato.trim() ? `Descripcion declarada: ${descripcionPlato.trim()}` : null,
+      ingredientes.length > 0 ? `Ingredientes declarados: ${ingredientes.join(", ")}` : null,
+      analisis?.justificacion ? `Resumen IA: ${analisis.justificacion}` : null,
+    ].filter(Boolean).join("\n");
 
     try {
-      const { data: nuevoPlato, error: platoError } = await supabase
-        .from("platos")
+      const platoPayload = {
+        nombre: nombre.trim(),
+        restaurante_id: restaurantId,
+        descripcion: descripcionPlato.trim() || null,
+        seccion: seccion.trim() || null,
+        imagen_url: imagen,
+        activo: true,
+        alergenos: alergenosSeleccionados,
+        trazas: analisis?.trazas ?? [],
+        justificacion: analisis?.justificacion ?? "Manual",
+        notas_internas: notasCompletas || null,
+      };
+
+      if (isEditing && platoId) {
+        const { error: updateError } = await supabase
+          .from("items")
+          .update(platoPayload)
+          .eq("id", platoId)
+          .eq("restaurante_id", restaurantId);
+
+        if (updateError) throw new Error(updateError.message);
+
+        const { data: linkExistente, error: linkExistenteError } = await supabase
+          .from("menu_items")
+          .select("item_id")
+          .eq("menu_id", menuId)
+          .eq("item_id", platoId)
+          .maybeSingle();
+
+        if (linkExistenteError) throw new Error(linkExistenteError.message);
+
+        if (!linkExistente) {
+          const { error: linkError } = await supabase
+            .from("menu_items")
+            .insert({ menu_id: menuId, item_id: platoId });
+          if (linkError) throw new Error(linkError.message);
+        }
+
+        router.push(`/dashboard/menus/platos?menuId=${menuId}`);
+        return;
+      }
+
+      const { data: platosInsertados, error: platoError } = await supabase
+        .from("items")
+        .insert(platoPayload)
+        .select("id");
+
+      if (platoError) throw new Error(platoError.message);
+
+      const nuevoPlato = platosInsertados?.[0];
+      if (!nuevoPlato) throw new Error("No se pudo recuperar el ID del plato");
+
+      const { error: linkError } = await supabase
+        .from("menu_items")
         .insert({
-          nombreplato: nombrePlato.trim(),
-          restaurante_id: restaurantId,
-          alergenos: alergenosSeleccionados,
-          trazas: analisis?.trazas ?? [],
-          justificacion:
-            analisis?.justificacion ?? "Sin análisis IA. Alergenos definidos manualmente.",
-          notas_internas: notasCompletas || null,
-        })
-        .select("id")
-        .single();
+          menu_id: menuId,
+          item_id: nuevoPlato.id,
+        });
 
-      if (platoError) throw platoError;
+      if (linkError) throw new Error(linkError.message);
 
-      const { error: linkError } = await supabase.from("menu_platos").insert({
-        menu_id: menuId,
-        plato_id: nuevoPlato.id,
-      });
-
-      if (linkError) throw linkError;
-
-      setUltimoPlatoId(nuevoPlato.id);
       setNombrePlato("");
       setDescripcionPlato("");
-      setIngredienteInput("");
+      setSeccion(seccionParam ?? "");
+      setImagen(null);
       setIngredientes([]);
       setAlergenosSeleccionados([]);
       setAlergenoInput("");
-      setImagen(null);
+      setIngredienteInput("");
       setNotasInternas("");
       setInstruccionesIA("");
       setAnalisis(null);
 
       await loadPlatosMenu();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo guardar";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Error al guardar el plato";
       setMensajeError(message);
     } finally {
       setGuardandoPlato(false);
@@ -330,19 +430,26 @@ export default function MenuBuilderPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-6xl mx-auto space-y-6">
+        {cargandoPlato && (
+          <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">
+            Cargando plato para editar...
+          </p>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-black text-gray-900">Agregar Platos al Menú</h1>
+            <h1 className="text-3xl font-black text-gray-900">
+              {isEditing ? "Modificar plato" : "Agregar Platos al Menú"}
+            </h1>
             <p className="text-gray-500 font-medium">
               Menú: {menuNombre || "Sin nombre"}
             </p>
           </div>
           <Link
-            href="/dashboard/menus"
+            href={`/dashboard/menus/platos?menuId=${menuId}`}
             className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-gray-100"
           >
             <ArrowLeft className="h-4 w-4" />
-            Volver a Menús
+            Volver al listado
           </Link>
         </div>
 
@@ -358,14 +465,27 @@ export default function MenuBuilderPage() {
             <div className="grid grid-cols-1 gap-5">
               <div>
                 <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
-                  Nombre del plato
+                  Nombre del item
                 </label>
                 <input
                   type="text"
-                  value={nombrePlato}
+                  value={nombre}
                   onChange={(e) => setNombrePlato(e.target.value)}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   placeholder="Ej: Tarta de queso"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase text-gray-600">
+                  Sección
+                </label>
+                <input
+                  type="text"
+                  value={seccion}
+                  onChange={(e) => setSeccion(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-900 placeholder:text-gray-400 outline-none shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Ej: Bebidas"
                 />
               </div>
 
@@ -551,7 +671,11 @@ export default function MenuBuilderPage() {
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 <Save className="h-4 w-4" />
-                {guardandoPlato ? "Guardando..." : "3) Guardar plato en menú"}
+                {guardandoPlato
+                  ? "Guardando..."
+                  : isEditing
+                    ? "3) Guardar cambios"
+                    : "3) Guardar plato en menú"}
               </button>
             </div>
 
@@ -623,7 +747,7 @@ export default function MenuBuilderPage() {
                       className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
                     >
                       <p className="text-sm font-semibold text-gray-800">
-                        {plato.nombreplato ?? "Plato sin nombre"}
+                        {getNombrePlato(plato)}
                       </p>
                       <p className="text-xs text-gray-500">
                         {new Date(plato.created_at).toLocaleString()}
@@ -634,19 +758,21 @@ export default function MenuBuilderPage() {
               )}
             </div>
 
-            {ultimoPlatoId && (
+            {publicMenuUrl && (
               <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-                <h3 className="text-sm font-bold text-gray-800">Último QR generado</h3>
+                <h3 className="text-sm font-bold text-gray-800">QR de página pública</h3>
                 <div className="mt-3 flex justify-center">
                   <QRCodeSVG
-                    value={`${window.location.origin}/plato/${ultimoPlatoId}`}
+                    value={publicMenuUrl}
                     size={110}
                   />
                 </div>
+                <p className="mt-2 text-center text-xs text-gray-500">
+                  Este QR abre el menú activo del día.
+                </p>
               </div>
             )}
-
-            <Link
+           <Link
               href={`/dashboard/menus/nuevo?menuId=${menuId}`}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-100"
             >
@@ -659,3 +785,5 @@ export default function MenuBuilderPage() {
     </div>
   );
 }
+
+// PAGE_INFO: Formulario para crear o editar un plato y asociarlo al menú.

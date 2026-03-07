@@ -124,7 +124,7 @@ const handleCrearMenu = async () => {
     }
 
     // Si todo ok, vamos a la página de agregar platos
-    router.push(`/dashboard/menus/nuevo?menuId=${data.id}`);
+    router.push(`/dashboard/menus/platos?menuId=${data.id}`);
   };
 
   const handleActivarMenu = async (menu: Menu) => {
@@ -178,7 +178,7 @@ const handleCrearMenu = async () => {
     setError(null);
 
     const { error: relError } = await supabase
-      .from("menu_platos")
+      .from("menu_items")
       .delete()
       .eq("menu_id", menuId);
 
@@ -287,7 +287,7 @@ const handleCrearMenu = async () => {
                         {menu.activo ? "Activo" : "Inactivo"}
                       </span>
                       <Link
-                        href={`/dashboard/menus/nuevo?menuId=${menu.id}`}
+                        href={`/dashboard/menus/platos?menuId=${menu.id}`}
                         className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-blue-700"
                       >
                         Gestionar
@@ -420,3 +420,5 @@ const handleCrearMenu = async () => {
     </div>
   );
 }
+
+// PAGE_INFO: Gestión de menús: crear, activar, configurar y eliminar.

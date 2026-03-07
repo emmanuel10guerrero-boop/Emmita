@@ -279,3 +279,4 @@ export default function PerfilPage() {
     </div>
   );
 }
+// PAGE_INFO: Perfil y configuración del usuario/restaurante.
