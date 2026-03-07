@@ -91,15 +91,7 @@ const handleCrearMenu = async () => {
 
     setGuardando(true);
     setError(null);
-    setGuardando(true);
-    setError(null);
 
-    const restauranteId = await getRestaurantId();
-    if (!restauranteId) {
-      setGuardando(false);
-      router.push("/registro");
-      return;
-    }
     const restauranteId = await getRestaurantId();
     if (!restauranteId) {
       setGuardando(false);
@@ -135,17 +127,35 @@ const handleCrearMenu = async () => {
     router.push(`/dashboard/menus/nuevo?menuId=${data.id}`);
   };
 
-useEffect(() => {
-    const loadMenus = async () => {
-      // Obtenemos el usuario actual para filtrar
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+  const handleActivarMenu = async (menu: Menu) => {
+    setGuardando(true);
+    setError(null);
 
-      const { data, error } = await supabase
-        .from("menus")
-        .select("*")
-        .eq('restaurante_id', user.id) // Solo trae mis menús
-        .order("created_at", { ascending: false });
+    const restauranteId = await getRestaurantId();
+    if (!restauranteId) {
+      setGuardando(false);
+      router.push("/registro");
+      return;
+    }
+
+    const { error: deactivateError } = await supabase
+      .from("menus")
+      .update({ activo: false })
+      .eq("restaurante_id", restauranteId)
+      .neq("id", menu.id);
+
+    if (deactivateError) {
+      setError(deactivateError.message);
+      setGuardando(false);
+      return;
+    }
+
+    const { data: activatedRows, error: activarError } = await supabase
+      .from("menus")
+      .update({ activo: true })
+      .eq("id", menu.id)
+      .eq("restaurante_id", restauranteId)
+      .select("id");
 
     if (activarError || !activatedRows || activatedRows.length === 0) {
       setError(activarError?.message ?? "No se pudo activar el menú.");
